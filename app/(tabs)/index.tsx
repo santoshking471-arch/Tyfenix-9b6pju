@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
-  FlatList, Dimensions, TextInput, Animated, Platform,
+  FlatList, Dimensions, TextInput, ActivityIndicator,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -10,9 +10,13 @@ import { useRouter } from 'expo-router';
 import { useTheme } from '@/hooks/useTheme';
 import { useCart } from '@/hooks/useCart';
 import { useAuth } from '@/hooks/useAuth';
-import { PRODUCTS, CATEGORIES, formatPrice, Product } from '@/constants/mockData';
-import { BorderRadius, FontSize, FontWeight, Shadow, Spacing } from '@/constants/theme';
+import { CATEGORIES, formatPrice } from '@/constants/mockData';
+import { BorderRadius, FontSize, FontWeight, Shadow } from '@/constants/theme';
 import { StatusBar } from 'expo-status-bar';
+
+// 🔥 Firebase Imports
+import { db } from '../firebaseConfig'; 
+import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const BANNER_HEIGHT = 180;
@@ -25,15 +29,41 @@ const BANNERS = [
 
 export default function HomeScreen() {
   const { colors, isDark } = useTheme();
-  const { count } = useCart();
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+
+  // Firebase States
+  const [products, setProducts] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  
   const [bannerIndex, setBannerIndex] = useState(0);
-  const [searchQuery, setSearchQuery] = useState('');
   const bannerRef = useRef<FlatList>(null);
   const timerRef = useRef<any>(null);
 
+  // --- 1. Real-time Products fetching from Firebase ---
+  useEffect(() => {
+    const q = query(collection(db, "products"), orderBy("createdAt", "desc"));
+    
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const productList = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setProducts(productList);
+      setIsLoading(false);
+    }, (error) => {
+      console.error("Home Data Error:", error);
+      setIsLoading(false);
+    });
+
+    return () => {
+      unsubscribe();
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, []);
+
+  // Banner Auto-scroll Logic
   useEffect(() => {
     timerRef.current = setInterval(() => {
       setBannerIndex(prev => {
@@ -45,17 +75,12 @@ export default function HomeScreen() {
     return () => clearInterval(timerRef.current);
   }, []);
 
-  const trending = PRODUCTS.slice(0, 6);
-  const featured = PRODUCTS.filter(p => p.badge).slice(0, 4);
-  const recommended = PRODUCTS.slice(6, 12);
+  // Logic to slice data for sections
+  const trending = products.slice(0, 6);
+  const featured = products.filter(p => p.discount > 10).slice(0, 4);
+  const recommended = products.slice(6, 16);
 
   const s = styles(colors, isDark);
-
-  const handleSearch = () => {
-    if (searchQuery.trim()) {
-      router.push({ pathname: '/products/listing', params: { query: searchQuery.trim() } });
-    }
-  };
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
@@ -69,10 +94,10 @@ export default function HomeScreen() {
             <Text style={s.brandName}>Tyfenix</Text>
           </View>
           <View style={s.headerActions}>
-            <TouchableOpacity style={s.iconBtn} onPress={() => router.push('/cart' as any)}>
+            <TouchableOpacity style={s.iconBtn} onPress={() => router.push('/cart')}>
               <MaterialIcons name="notifications-none" size={24} color={colors.text} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => router.push('/profile' as any)}>
+            <TouchableOpacity onPress={() => router.push('/profile')}>
               <Image
                 source={{ uri: user?.avatar || 'https://i.pravatar.cc/100?img=33' }}
                 style={s.avatar}
@@ -82,8 +107,7 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* Search Bar */}
-        <TouchableOpacity style={s.searchBar} onPress={() => router.push({ pathname: '/products/listing', params: {} })}>
+        <TouchableOpacity style={s.searchBar} onPress={() => router.push('/products/listing')}>
           <MaterialIcons name="search" size={20} color={colors.textMuted} />
           <Text style={s.searchPlaceholder}>Search products, brands...</Text>
           <MaterialIcons name="mic" size={20} color={colors.primary} />
@@ -141,7 +165,7 @@ export default function HomeScreen() {
         </View>
 
         {/* Categories */}
-        <SectionHeader title="Shop by Category" onPress={() => router.push('/categories' as any)} colors={colors} />
+        <SectionHeader title="Shop by Category" onPress={() => router.push('/categories')} colors={colors} />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.categoriesRow}>
           {CATEGORIES.map(cat => (
             <TouchableOpacity
@@ -158,18 +182,20 @@ export default function HomeScreen() {
         </ScrollView>
 
         {/* Trending */}
-        <SectionHeader title="Trending Now 🔥" onPress={() => router.push('/products/listing' as any)} colors={colors} />
-        <FlatList
-          data={trending}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          keyExtractor={item => item.id}
-          contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
-          renderItem={({ item }) => <ProductCard product={item} colors={colors} router={router} />}
-        />
+        <SectionHeader title="Trending Now 🔥" onPress={() => router.push('/products/listing')} colors={colors} />
+        {isLoading ? <ActivityIndicator color={colors.primary} /> : (
+          <FlatList
+            data={trending}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            keyExtractor={item => item.id}
+            contentContainerStyle={{ paddingHorizontal: 16, gap: 12 }}
+            renderItem={({ item }) => <ProductCard product={item} colors={colors} router={router} />}
+          />
+        )}
 
-        {/* Featured */}
-        <SectionHeader title="Featured Deals ⚡" onPress={() => router.push('/products/listing' as any)} colors={colors} />
+        {/* Featured Deals */}
+        <SectionHeader title="Featured Deals ⚡" onPress={() => router.push('/products/listing')} colors={colors} />
         <FlatList
           data={featured}
           horizontal
@@ -179,8 +205,8 @@ export default function HomeScreen() {
           renderItem={({ item }) => <ProductCard product={item} colors={colors} router={router} wide />}
         />
 
-        {/* Recommended */}
-        <SectionHeader title="Recommended for You" onPress={() => router.push('/products/listing' as any)} colors={colors} />
+        {/* Recommended Grid */}
+        <SectionHeader title="Recommended for You" onPress={() => router.push('/products/listing')} colors={colors} />
         <View style={s.grid}>
           {recommended.map(product => (
             <TouchableOpacity
@@ -190,18 +216,13 @@ export default function HomeScreen() {
               activeOpacity={0.85}
             >
               <Image source={{ uri: product.image }} style={s.gridImage} contentFit="cover" />
-              {product.badge && <View style={s.gridBadge}><Text style={s.gridBadgeText}>{product.badge}</Text></View>}
               <View style={{ padding: 10 }}>
                 <Text style={[s.gridName, { color: colors.text }]} numberOfLines={2}>{product.name}</Text>
-                <View style={s.ratingRow}>
-                  <MaterialIcons name="star" size={12} color={colors.star} />
-                  <Text style={[s.ratingText, { color: colors.textSecondary }]}>{product.rating} ({product.reviews.toLocaleString()})</Text>
-                </View>
                 <View style={s.priceRow}>
-                  <Text style={[s.gridPrice, { color: colors.text }]}>{formatPrice(product.price)}</Text>
-                  <Text style={[s.gridDiscount, { color: colors.discount }]}>{product.discount}% off</Text>
+                  <Text style={[s.gridPrice, { color: colors.text }]}>₹{product.price}</Text>
+                  {product.discount > 0 && <Text style={[s.gridDiscount, { color: colors.discount }]}>{product.discount}% off</Text>}
                 </View>
-                <Text style={[s.gridOriginal, { color: colors.textMuted }]}>{formatPrice(product.originalPrice)}</Text>
+                <Text style={[s.gridOriginal, { color: colors.textMuted }]}>₹{product.originalPrice}</Text>
               </View>
             </TouchableOpacity>
           ))}
@@ -212,45 +233,35 @@ export default function HomeScreen() {
   );
 }
 
-function SectionHeader({ title, onPress, colors }: { title: string; onPress: () => void; colors: any }) {
+// Helper Components
+function SectionHeader({ title, onPress, colors }: any) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, marginTop: 20, marginBottom: 12 }}>
-      <Text style={{ fontSize: FontSize.lg, fontWeight: FontWeight.bold, color: colors.text }}>{title}</Text>
+      <Text style={{ fontSize: 16, fontWeight: 'bold', color: colors.text }}>{title}</Text>
       <TouchableOpacity onPress={onPress}>
-        <Text style={{ fontSize: FontSize.sm, fontWeight: FontWeight.semibold, color: colors.primary }}>See all</Text>
+        <Text style={{ fontSize: 13, color: colors.primary, fontWeight: '600' }}>See all</Text>
       </TouchableOpacity>
     </View>
   );
 }
 
-function ProductCard({ product, colors, router, wide }: { product: Product; colors: any; router: any; wide?: boolean }) {
+function ProductCard({ product, colors, router, wide }: any) {
   const w = wide ? 200 : 160;
   return (
     <TouchableOpacity
-      style={[{
+      style={{
         width: w,
         backgroundColor: colors.card,
-        borderRadius: BorderRadius.lg,
+        borderRadius: 12,
         overflow: 'hidden',
         ...Shadow.md,
-        shadowColor: colors.shadow,
-      }]}
+      }}
       onPress={() => router.push({ pathname: '/product/[id]', params: { id: product.id } })}
-      activeOpacity={0.85}
     >
       <Image source={{ uri: product.image }} style={{ width: w, height: w * 0.75 }} contentFit="cover" />
-      {product.badge && (
-        <View style={{ position: 'absolute', top: 8, left: 8, backgroundColor: colors.primary, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}>
-          <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>{product.badge}</Text>
-        </View>
-      )}
       <View style={{ padding: 10 }}>
-        <Text style={{ color: colors.text, fontSize: FontSize.sm, fontWeight: FontWeight.semibold, marginBottom: 4 }} numberOfLines={2}>{product.name}</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 6 }}>
-          <MaterialIcons name="star" size={11} color={colors.star} />
-          <Text style={{ color: colors.textSecondary, fontSize: 11 }}>{product.rating}</Text>
-        </View>
-        <Text style={{ color: colors.text, fontSize: FontSize.md, fontWeight: FontWeight.bold }}>{formatPrice(product.price)}</Text>
+        <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }} numberOfLines={2}>{product.name}</Text>
+        <Text style={{ color: colors.text, fontSize: 16, fontWeight: 'bold', marginTop: 5 }}>₹{product.price}</Text>
         <Text style={{ color: colors.discount, fontSize: 11, fontWeight: '600' }}>{product.discount}% off</Text>
       </View>
     </TouchableOpacity>
@@ -266,43 +277,39 @@ function getTimeGreeting() {
 
 const styles = (colors: any, isDark: boolean) => StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  header: { backgroundColor: colors.surface, paddingHorizontal: 16, paddingBottom: 12, ...Shadow.sm, shadowColor: colors.shadow },
+  header: { backgroundColor: colors.surface, paddingHorizontal: 16, paddingBottom: 12, ...Shadow.sm },
   headerTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, marginTop: 8 },
-  greeting: { color: colors.textMuted, fontSize: FontSize.xs },
-  brandName: { color: colors.primary, fontSize: FontSize.xxl, fontWeight: FontWeight.extrabold, letterSpacing: 1 },
+  greeting: { color: colors.textMuted, fontSize: 12 },
+  brandName: { color: colors.primary, fontSize: 24, fontWeight: '900' },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   iconBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center' },
   avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: colors.border },
-  searchBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.background, borderRadius: BorderRadius.circle, paddingHorizontal: 16, paddingVertical: 10, gap: 10, borderWidth: 1, borderColor: colors.border },
-  searchPlaceholder: { flex: 1, color: colors.textMuted, fontSize: FontSize.md },
+  searchBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: colors.background, borderRadius: 25, paddingHorizontal: 16, paddingVertical: 10, gap: 10, borderWidth: 1, borderColor: colors.border },
+  searchPlaceholder: { flex: 1, color: colors.textMuted, fontSize: 14 },
   bannerContainer: { marginTop: 12, marginHorizontal: 16 },
-  bannerSlide: { width: SCREEN_WIDTH - 32, height: BANNER_HEIGHT, borderRadius: BorderRadius.xl, overflow: 'hidden' },
+  bannerSlide: { width: SCREEN_WIDTH - 32, height: BANNER_HEIGHT, borderRadius: 15, overflow: 'hidden' },
   bannerImage: { width: '100%', height: '100%' },
-  bannerOverlay: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: 16, backgroundColor: 'rgba(0,0,0,0.45)' },
-  bannerLabel: { color: '#fff', fontSize: FontSize.lg, fontWeight: FontWeight.bold, marginBottom: 8 },
-  bannerBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.primary, alignSelf: 'flex-start', paddingHorizontal: 14, paddingVertical: 6, borderRadius: BorderRadius.circle },
-  bannerBtnText: { color: '#fff', fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
+  bannerOverlay: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: 16, backgroundColor: 'rgba(0,0,0,0.4)' },
+  bannerLabel: { color: '#fff', fontSize: 18, fontWeight: 'bold', marginBottom: 8 },
+  bannerBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.primary, alignSelf: 'flex-start', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20 },
+  bannerBtnText: { color: '#fff', fontSize: 12, fontWeight: '600' },
   dotsRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 8, gap: 6 },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.border },
   dotActive: { width: 18, backgroundColor: colors.primary },
-  quickStats: { flexDirection: 'row', marginHorizontal: 16, marginTop: 16, backgroundColor: colors.surface, borderRadius: BorderRadius.lg, padding: 12, ...Shadow.sm, shadowColor: colors.shadow },
+  quickStats: { flexDirection: 'row', marginHorizontal: 16, marginTop: 16, backgroundColor: colors.surface, borderRadius: 12, padding: 12, ...Shadow.sm },
   statItem: { flex: 1, alignItems: 'center', gap: 4 },
-  statLabel: { color: colors.text, fontSize: 11, fontWeight: FontWeight.semibold, textAlign: 'center' },
+  statLabel: { color: colors.text, fontSize: 11, fontWeight: '600', textAlign: 'center' },
   statSub: { color: colors.textMuted, fontSize: 10, textAlign: 'center' },
   categoriesRow: { paddingHorizontal: 16, gap: 10 },
   categoryChip: { alignItems: 'center', gap: 6, width: 72 },
   categoryIcon: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center' },
   categoryLabel: { color: colors.text, fontSize: 10, fontWeight: '600', textAlign: 'center' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 12, gap: 10 },
-  gridCard: { width: (SCREEN_WIDTH - 34) / 2, backgroundColor: colors.card, borderRadius: BorderRadius.lg, overflow: 'hidden', ...Shadow.sm, shadowColor: colors.shadow },
+  gridCard: { width: (SCREEN_WIDTH - 34) / 2, backgroundColor: colors.card, borderRadius: 12, overflow: 'hidden', ...Shadow.sm },
   gridImage: { width: '100%', height: 160 },
-  gridBadge: { position: 'absolute', top: 8, left: 8, backgroundColor: '#E53935', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 3 },
-  gridBadgeText: { color: '#fff', fontSize: 9, fontWeight: '700' },
-  gridName: { fontSize: FontSize.sm, fontWeight: FontWeight.semibold, marginBottom: 4, lineHeight: 18 },
-  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 6 },
-  ratingText: { fontSize: 11 },
-  priceRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 },
-  gridPrice: { fontSize: FontSize.md, fontWeight: FontWeight.bold },
+  gridName: { fontSize: 14, fontWeight: '600', marginBottom: 4 },
+  priceRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  gridPrice: { fontSize: 16, fontWeight: 'bold' },
   gridDiscount: { fontSize: 11, fontWeight: '600' },
   gridOriginal: { fontSize: 11, textDecorationLine: 'line-through' },
 });
