@@ -1,12 +1,20 @@
-import React, { createContext, useState, ReactNode } from 'react';
+import React, { createContext, useState, ReactNode, useEffect } from 'react';
+import { auth, db } from '../firebaseConfig'; 
+import { 
+  signInWithEmailAndPassword, 
+  onAuthStateChanged, 
+  signOut,
+  createUserWithEmailAndPassword // Signup ke liye zaroori hai
+} from 'firebase/auth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 
 export interface User {
   id: string;
   name: string;
   email: string;
-  phone?: string;
-  avatar?: string;
+  phone?: string; // Phone number add ho gaya
   isAdmin: boolean;
+  avatar?: string;
 }
 
 interface AuthContextType {
@@ -14,94 +22,90 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<boolean>;
-  loginWithGoogle: () => Promise<boolean>;
-  signup: (name: string, email: string, password: string) => Promise<boolean>;
+  signup: (name: string, email: string, password: string, phone: string) => Promise<boolean>;
   logout: () => void;
-  updateProfile: (data: Partial<User>) => void;
 }
-
-const ADMIN_EMAIL = 'santoshking471@gmail.com';
-const ADMIN_PASSWORD = 'Santosh@9368';
 
 export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        // Firestore se user ka extra data (jaise phone number) nikalna
+        const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+        const userData = userDoc.data();
+
+        setUser({
+          id: firebaseUser.uid,
+          name: userData?.name || firebaseUser.email?.split('@')[0],
+          email: firebaseUser.email || '',
+          phone: userData?.phone || '', 
+          isAdmin: firebaseUser.email === 'santoshking471@gmail.com',
+          avatar: firebaseUser.photoURL || 'https://i.pravatar.cc/150',
+        });
+      } else {
+        setUser(null);
+      }
+      setIsLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Login Function
   const login = async (email: string, password: string): Promise<boolean> => {
-    setIsLoading(true);
-    await new Promise(r => setTimeout(r, 1200));
-    setIsLoading(false);
-
-    if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
-      setUser({
-        id: 'admin001',
-        name: 'Santosh King',
-        email: ADMIN_EMAIL,
-        isAdmin: true,
-        avatar: 'https://i.pravatar.cc/200?img=12',
-      });
+    try {
+      setIsLoading(true);
+      await signInWithEmailAndPassword(auth, email, password);
       return true;
+    } catch (error) {
+      console.error("Login Error:", error);
+      return false;
+    } finally {
+      setIsLoading(false);
     }
+  };
 
-    if (email && password.length >= 6) {
-      setUser({
-        id: 'user001',
-        name: email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+  // Signup Function (Yahan Phone Number save hoga)
+  const signup = async (name: string, email: string, password: string, phone: string): Promise<boolean> => {
+    try {
+      setIsLoading(true);
+      const res = await createUserWithEmailAndPassword(auth, email, password);
+      
+      // Firestore mein user ki detail save karna
+      await setDoc(doc(db, 'users', res.user.uid), {
+        name,
         email,
-        isAdmin: false,
-        avatar: 'https://i.pravatar.cc/200?img=33',
+        phone,
+        isAdmin: email === 'santoshking471@gmail.com',
+        createdAt: new Date().toISOString()
       });
+      
       return true;
+    } catch (error) {
+      console.error("Signup Error:", error);
+      return false;
+    } finally {
+      setIsLoading(false);
     }
-    return false;
   };
 
-  const loginWithGoogle = async (): Promise<boolean> => {
-    setIsLoading(true);
-    await new Promise(r => setTimeout(r, 1500));
-    setIsLoading(false);
-    setUser({
-      id: 'google001',
-      name: 'Google User',
-      email: 'user@gmail.com',
-      isAdmin: false,
-      avatar: 'https://i.pravatar.cc/200?img=15',
-    });
-    return true;
-  };
-
-  const signup = async (name: string, email: string, password: string): Promise<boolean> => {
-    setIsLoading(true);
-    await new Promise(r => setTimeout(r, 1500));
-    setIsLoading(false);
-    setUser({
-      id: 'new001',
-      name,
-      email,
-      isAdmin: false,
-      avatar: 'https://i.pravatar.cc/200?img=20',
-    });
-    return true;
-  };
-
-  const logout = () => setUser(null);
-
-  const updateProfile = (data: Partial<User>) => {
-    setUser(prev => prev ? { ...prev, ...data } : null);
+  const logout = async () => {
+    await signOut(auth);
+    setUser(null);
   };
 
   return (
     <AuthContext.Provider value={{
       user,
-      isAuthenticated: user !== null,
+      isAuthenticated: !!user,
       isLoading,
       login,
-      loginWithGoogle,
       signup,
       logout,
-      updateProfile,
     }}>
       {children}
     </AuthContext.Provider>
