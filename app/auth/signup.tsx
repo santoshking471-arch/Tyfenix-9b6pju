@@ -27,7 +27,7 @@ export default function SignupScreen() {
   const [showPass, setShowPass] = useState(false);
 
   const handleSignup = async () => {
-    if (!name.trim() || !email.trim() || !password || !confirm) {
+    if (!name.trim() || !email.trim() || !password || !confirm || !phone.trim()) {
       showAlert('Missing Fields', 'Please fill all required fields.');
       return;
     }
@@ -39,11 +39,12 @@ export default function SignupScreen() {
       showAlert('Weak Password', 'Password must be at least 6 characters.');
       return;
     }
-    const ok = await signup(name.trim(), email.trim(), password);
+    const ok = await signup(name.trim(), email.trim(), password, phone.trim());
     if (ok) router.replace('/(tabs)');
   };
 
   const s = styles(colors);
+
 
   return (
     <KeyboardAvoidingView style={s.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
